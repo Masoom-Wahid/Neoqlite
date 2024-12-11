@@ -77,8 +77,13 @@ impl Schema {
         }
     }
 
-    pub fn add_column(&mut self, name: String, column_type: ColumnType) {
-        let new_column = Column::new(&name, column_type, &[], self.curr_order);
+    pub fn add_column(
+        &mut self,
+        name: String,
+        column_type: ColumnType,
+        constraints: Vec<Constraints>,
+    ) {
+        let new_column = Column::new(&name, column_type, &constraints, self.curr_order);
         self.columns.insert(new_column);
         self.curr_order += 1;
     }
@@ -119,6 +124,34 @@ impl Schema {
                     }
                 },
                 None => return Err(format!("Did you just create the column: {}", &col)),
+            }
+        }
+
+        // checkf for missing keys and then test one of them has a NOTNULL constraints ,if
+        // so , start crying
+        let missing_keys: Vec<String> = self
+            .columns
+            .iter()
+            .filter_map(|col| {
+                if columns.contains(&col.name) {
+                    None
+                } else {
+                    Some(col.name.clone())
+                }
+            })
+            .collect();
+
+        for missing_key in &missing_keys {
+            match self.get_column(&missing_key) {
+                Some(col) => {
+                    if col.constraints.contains(&Constraints::NotNull) {
+                        return Err(format!(
+                            "NOT NULL Constraint Failed on Column {}",
+                            &missing_key
+                        ));
+                    }
+                }
+                None => {}
             }
         }
         Ok(result)
@@ -306,28 +339,28 @@ impl Neoqlite {
         let mut user_table = Table::new();
         user_table
             .schema
-            .add_column("id".to_string(), ColumnType::Int);
+            .add_column("id".to_string(), ColumnType::Int, vec![]);
         user_table
             .schema
-            .add_column("username".to_string(), ColumnType::String);
+            .add_column("username".to_string(), ColumnType::String, vec![]);
         user_table
             .schema
-            .add_column("email".to_string(), ColumnType::String);
+            .add_column("email".to_string(), ColumnType::String, vec![]);
 
         user_table
             .schema
-            .add_column("otp".to_string(), ColumnType::Int);
+            .add_column("otp".to_string(), ColumnType::Int, vec![]);
 
         let mut dummy_table = Table::new();
         dummy_table
             .schema
-            .add_column("id".to_string(), ColumnType::Int);
+            .add_column("id".to_string(), ColumnType::Int, vec![]);
         dummy_table
             .schema
-            .add_column("username".to_string(), ColumnType::String);
+            .add_column("username".to_string(), ColumnType::String, vec![]);
         dummy_table
             .schema
-            .add_column("email".to_string(), ColumnType::String);
+            .add_column("email".to_string(), ColumnType::String, vec![]);
 
         tables.insert("users".to_string(), user_table);
         tables.insert("dummy".to_string(), dummy_table);
@@ -397,7 +430,7 @@ impl Neoqlite {
 
         let mut new_table = Table::new();
 
-        for (col, col_type) in &query.columns {
+        for (col, col_type, col_constraints) in &query.columns {
             if col == "id" {
                 if *col_type != ColumnType::Int {
                     return Err(format!("Expected 'id' to be an int"));
@@ -406,7 +439,9 @@ impl Neoqlite {
                 }
             }
 
-            new_table.schema.add_column(col.clone(), col_type.clone());
+            new_table
+                .schema
+                .add_column(col.clone(), col_type.clone(), col_constraints.clone());
         }
 
         if !did_have_id {

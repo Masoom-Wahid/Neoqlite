@@ -1,5 +1,5 @@
 use crate::{
-    core::db::ColumnType,
+    core::db::{ColumnType, Constraints},
     parser::lexer::{Keyword, Token},
 };
 
@@ -39,7 +39,7 @@ pub struct InsertQuery {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateTableQuery {
     pub table: String,
-    pub columns: Vec<(String, ColumnType)>,
+    pub columns: Vec<(String, ColumnType, Vec<Constraints>)>,
 }
 
 pub struct Parser {
@@ -73,6 +73,26 @@ impl Parser {
 
     fn advance(&mut self) {
         self.position += 1;
+    }
+
+    fn expect_peek_token(&mut self, token: Token) -> Result<(), String> {
+        if let Some(ref curr_token) = self.peek_token() {
+            println!(
+                "curr_token is {:?} ,expected token is {:?}",
+                curr_token, token
+            );
+            if **curr_token == token {
+                Ok(())
+            } else {
+                Err(format!("Expected {:?}, but found {:?}", token, curr_token))
+            }
+        } else {
+            Err(format!(
+                "Expected {:?}, but found {:?}",
+                token,
+                self.current_token()
+            ))
+        }
     }
 
     fn expect_token(&mut self, token: Token) -> Result<(), String> {
@@ -159,10 +179,18 @@ impl Parser {
     }
 
     fn to_column_type(input: &str) -> Result<ColumnType, String> {
-        match input {
-            "int" => Ok(ColumnType::Int),
-            "text" => Ok(ColumnType::String),
+        match input.to_uppercase().as_str() {
+            "INT" => Ok(ColumnType::Int),
+            "TEXT" => Ok(ColumnType::String),
             _ => Err(format!("Invalid Column type , got {}", input)),
+        }
+    }
+
+    fn parse_constraint(input: &str) -> Result<Constraints, String> {
+        match input.to_uppercase().as_str() {
+            "NOTNULL" => Ok(Constraints::NotNull),
+            "NULL" => Ok(Constraints::Null),
+            _ => Err(format!("Invalid constraint got {}", input)),
         }
     }
 
@@ -171,18 +199,35 @@ impl Parser {
         self.expect_keyword(Keyword::Table)?;
         let table = self.expect_identifier()?;
         self.expect_token(Token::LParen)?;
-        let mut columns: Vec<(String, ColumnType)> = Vec::new();
+        let mut columns: Vec<(String, ColumnType, Vec<Constraints>)> = Vec::new();
         loop {
             let column_name = self.expect_identifier()?;
             let column_type = Self::to_column_type(&self.expect_identifier()?)?;
-            columns.push((column_name, column_type));
+            let mut constraints: Vec<Constraints> = Vec::new();
+            println!("here");
+            loop {
+                println!("{:?}", self.current_token());
+                if matches!(self.current_token(), Some(Token::Comma))
+                    || matches!(self.current_token(), Some(Token::RParen))
+                    || self.expect_peek_token(Token::RParen).is_ok()
+                {
+                    break;
+                } else {
+                    let constraint = Self::parse_constraint(&self.expect_identifier()?)?;
+                    constraints.push(constraint);
+                }
+            }
+
+            columns.push((column_name, column_type, constraints));
+            println!("after {:?}", columns);
+
             if let Some(Token::Comma) = self.current_token() {
                 /*
                  *   just in case if we have been in a place that after comma is a right paren
                  */
                 match self.peek_token() {
                     Some(Token::RParen) => {
-                        self.advance();
+                        //self.advance();
                         break;
                     }
                     _ => {}
@@ -192,7 +237,7 @@ impl Parser {
                 break;
             }
         }
-
+        println!("columns : {:?}", columns);
         self.expect_token(Token::RParen)?;
         self.expect_token(Token::Semicolon)?;
 

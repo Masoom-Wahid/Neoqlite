@@ -10,7 +10,7 @@ async fn main() -> Result<(), String> {
     neoqlite.exec_stmt(
         "CREATE TABLE otp (
         id int,
-        otp text,
+        otp text notnull,
         is_valid int
     );",
     )?;
