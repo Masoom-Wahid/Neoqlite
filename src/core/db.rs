@@ -1,9 +1,10 @@
 use crate::core::btree::BTree;
 use crate::parser::lexer::Lexer;
 use crate::parser::parser::{
-    DeleteQuery, Expr, InsertQuery, Parser, Query, SelectQuery, WhereClause,
+    CreateTableQuery, DeleteQuery, Expr, InsertQuery, Parser, Query, SelectQuery, WhereClause,
 };
 use std::collections::{HashMap, HashSet};
+use std::i64;
 use std::process::exit;
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -47,11 +48,25 @@ pub struct Schema {
     curr_order: u8,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
 pub enum DataType {
     Int(i64),
-    Float(f64),
     Text(String),
+}
+
+impl Default for DataType {
+    fn default() -> Self {
+        DataType::Int(0)
+    }
+}
+
+impl DataType {
+    pub fn get_value(&self) -> &dyn std::fmt::Display {
+        match self {
+            DataType::Int(val) => val,
+            DataType::Text(val) => val,
+        }
+    }
 }
 
 impl Schema {
@@ -68,15 +83,56 @@ impl Schema {
         self.curr_order += 1;
     }
 
-    pub fn validate_row(&self, row: &HashMap<String, String>) -> Result<(), String> {
+    pub fn get_column(&self, name: &str) -> Option<&Column> {
+        self.columns.iter().find(|col| col.name == name)
+    }
+
+    pub fn validate_column(schema_col: &Column, val: &Expr) -> Option<DataType> {
+        match schema_col.column_type {
+            ColumnType::String => match val {
+                Expr::Ident(ref s) => Some(DataType::Text(s.to_string())),
+                _ => None,
+            },
+            ColumnType::Int => match val {
+                Expr::Number(n) => Some(DataType::Int(*n)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn validate_insert_row(
+        &self,
+        columns: &Vec<String>,
+        values: &Vec<Expr>,
+    ) -> Result<Vec<DataType>, String> {
+        let mut result: Vec<DataType> = vec![];
+        for (i, col) in columns.iter().enumerate() {
+            match self.get_column(&col) {
+                Some(schema_col) => match Self::validate_column(schema_col, &values[i]) {
+                    Some(datatype) => result.push(datatype),
+                    None => {
+                        return Err(format!(
+                            "Invalid type for column {} expected {:?} got {:?}",
+                            col, schema_col.column_type, values[i]
+                        ));
+                    }
+                },
+                None => return Err(format!("Did you just create the column: {}", &col)),
+            }
+        }
+        Ok(result)
+    }
+
+    pub fn validate_row(&self, values: &Vec<String>) -> Result<(), String> {
         for col in &self.columns {
-            if let Some(value) = row.get(&col.name) {
+            if let Some(value) = values.get((col.order - 1) as usize) {
                 match col.column_type {
                     ColumnType::Int => {
                         value.parse::<i64>().expect("invalid int value");
                     }
-                    ColumnType::String => (), // Always valid
-                    ColumnType::Date => (),   // Extend later for date parsing
+                    ColumnType::String => (),
+                    ColumnType::Date => (),
                 }
             } else {
                 return Err(format!("Missing column: {}", &col.name));
@@ -89,7 +145,7 @@ impl Schema {
 #[derive(Debug)]
 pub struct Table {
     schema: Schema,
-    rows: BTree<String, Vec<DataType>>,
+    rows: BTree<DataType, HashMap<String, DataType>>,
 }
 
 impl Table {
@@ -100,21 +156,31 @@ impl Table {
         }
     }
 
-    pub fn insert_row(&mut self, row: HashMap<String, String>) -> Result<(), String> {
-        self.schema.validate_row(&row)?;
+    pub fn insert_row(&mut self, columns: Vec<String>, values_: Vec<Expr>) -> Result<(), String> {
+        let values = self.schema.validate_insert_row(&columns, &values_)?;
+        let id = columns
+            .iter()
+            .position(|s| s == "id")
+            .ok_or_else(|| "expected an 'id' column".to_string())?;
+        /*
         let id = row
             .get("id")
             .ok_or_else(|| "missing primary key".to_string())?
             .clone();
-
-        if self.rows.search(&id).is_some() {
+        */
+        if self.rows.search(&values[id]).is_some() {
             return Err("Duplicate primary key".to_string());
         }
 
-        self.rows.insert(id, row);
+        let mut rows = HashMap::new();
+        for i in 0..columns.len() {
+            rows.insert(columns[i].clone(), values[i].clone());
+        }
+        self.rows.insert(values[id].clone(), rows);
         Ok(())
     }
 
+    /*
     pub fn delete_row(&mut self, query: &DeleteQuery) -> Result<(), String> {
         if let Some(q) = &query.where_clause {
             let _left_value = match q.left {
@@ -134,41 +200,96 @@ impl Table {
         }
         Ok(())
     }
+    */
+
+    fn delete_row(&mut self, query: DeleteQuery) -> Result<(), String> {
+        if let Some(c) = query.where_clause {
+            match c.left {
+                Expr::Ident(ref s) if s != "id" => {
+                    return Err("Buddy you have high expecations".to_string());
+                }
+                _ => {}
+            }
+            let right_value = match c.right {
+                Expr::Number(ref s) => Some(DataType::Int(*s)),
+                _ => return Err("man cmon , dont you know the id is a number??????".to_string()),
+            }
+            .expect("expected a valid value in right");
+
+            self.rows.delete(&right_value);
+        } else {
+            return Err(
+                "Expected a where clause , do you want me to delete the whole table??????"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
 
     fn get_row_from_where_clause(
         &self,
         clause: &Option<WhereClause>,
-    ) -> Option<HashMap<String, String>> {
+    ) -> Result<HashMap<String, DataType>, String> {
         if let Some(c) = clause {
             let where_clause = c.clone();
             match &where_clause.left {
                 Expr::Ident(ref s) if s != "id" => {
-                    println!("Buddy you have high expecations");
-                    return None;
+                    return Err("Buddy you have high expecations".to_string());
                 }
                 _ => {}
-            }
+            };
 
-            let right_value = {
-                if let Expr::Ident(ref s) = where_clause.right {
-                    Some(s)
-                } else {
-                    None
-                }
+            let right_value = match where_clause.right {
+                Expr::Ident(ref s) => Some(DataType::Text(s.to_string())),
+                Expr::Number(ref s) => Some(DataType::Int(*s)),
             }
-            .expect("expected a ident my nigga");
-            let row = self.rows.search(right_value);
-            row.cloned()
+            .expect("expected a valid value in right");
+            let row = self.rows.search(&right_value);
+            Ok(row.ok_or_else(|| "Couldnt find a row").cloned()?)
         } else {
-            None
+            Err("No Where Clause".to_string())
         }
     }
 
-    pub fn select_rows(&self, query: &SelectQuery) -> Vec<HashMap<String, String>> {
-        if let Some(row) = self.get_row_from_where_clause(&query.where_clause) {
-            return vec![row];
+    pub fn select_rows(&self, query: &SelectQuery) -> Option<Vec<HashMap<String, DataType>>> {
+        if let Ok(row) = self.get_row_from_where_clause(&query.where_clause) {
+            let result: HashMap<String, DataType> = {
+                if query.columns[0] != "*" {
+                    query
+                        .columns
+                        .iter()
+                        .filter_map(|s| row.get(s).map(|v| (s.clone(), v.clone())))
+                        .collect()
+                } else {
+                    row
+                }
+            };
+            return Some(vec![result]);
         } else {
-            return self.rows.values_in_order();
+            if query.where_clause.is_none() {
+                // TODO:this is really bad , should be refactored
+
+                let result: Vec<HashMap<String, DataType>> = {
+                    if query.columns[0] == "*" {
+                        self.rows.values_in_order()
+                    } else {
+                        self.rows
+                            .values_in_order()
+                            .iter()
+                            .map(|row| {
+                                query
+                                    .columns
+                                    .iter()
+                                    .filter_map(|s| row.get(s).map(|v| (s.clone(), v.clone())))
+                                    .collect()
+                            })
+                            .collect()
+                    }
+                };
+                return Some(result);
+            } else {
+                None
+            }
         }
     }
 }
@@ -176,6 +297,7 @@ impl Table {
 #[derive(Debug)]
 pub struct Neoqlite {
     tables: HashMap<String, Table>,
+    debug: bool,
 }
 
 impl Neoqlite {
@@ -184,7 +306,7 @@ impl Neoqlite {
         let mut user_table = Table::new();
         user_table
             .schema
-            .add_column("id".to_string(), ColumnType::String);
+            .add_column("id".to_string(), ColumnType::Int);
         user_table
             .schema
             .add_column("username".to_string(), ColumnType::String);
@@ -192,13 +314,42 @@ impl Neoqlite {
             .schema
             .add_column("email".to_string(), ColumnType::String);
 
+        user_table
+            .schema
+            .add_column("otp".to_string(), ColumnType::Int);
+
+        let mut dummy_table = Table::new();
+        dummy_table
+            .schema
+            .add_column("id".to_string(), ColumnType::Int);
+        dummy_table
+            .schema
+            .add_column("username".to_string(), ColumnType::String);
+        dummy_table
+            .schema
+            .add_column("email".to_string(), ColumnType::String);
+
         tables.insert("users".to_string(), user_table);
-        Self { tables }
+        tables.insert("dummy".to_string(), dummy_table);
+
+        let debug = false;
+        Self { tables, debug }
+    }
+
+    //  GOOD OLD OOP HUH
+    pub fn set_debug(&mut self, value: bool) {
+        self.debug = value;
     }
 
     pub fn exec_meta_command(&self, input: &str) {
         match input {
             ".exit" => exit(0),
+            ".bt" => {
+                for (table_name, table) in &self.tables {
+                    println!("Table : {}", table_name);
+                    println!("\n{:?}\n", table);
+                }
+            }
             _ => println!("Unknown Meta Command"),
         }
     }
@@ -212,13 +363,7 @@ impl Neoqlite {
         if query.columns.len() != query.values.len() {
             return Err("columns and values are not the same length".to_string());
         }
-
-        let mut row: HashMap<String, String> = HashMap::new();
-
-        for i in 0..query.columns.len() {
-            row.insert(query.columns[i].clone(), query.values[i].clone());
-        }
-        table.insert_row(row)
+        table.insert_row(query.columns, query.values)
     }
 
     pub fn exec_select(&self, query: SelectQuery) -> Result<(), String> {
@@ -227,7 +372,7 @@ impl Neoqlite {
             .get(&query.table)
             .ok_or_else(|| "Table not found".to_string())?;
 
-        let result = table.select_rows(&query);
+        let result = table.select_rows(&query).ok_or("None")?;
         for row in result {
             println!("{:?}", row);
         }
@@ -239,16 +384,48 @@ impl Neoqlite {
             .tables
             .get_mut(&query.table)
             .ok_or_else(|| "Table not found".to_string())?;
+        table.delete_row(query)?;
+        Ok(())
+    }
 
-        table.delete_row(&query)?;
+    pub fn exec_create_table(&mut self, query: CreateTableQuery) -> Result<(), String> {
+        if self.tables.get(&query.table).is_some() {
+            return Err(format!("A Table with name '{}' exists", query.table));
+        }
+
+        let mut did_have_id = false;
+
+        let mut new_table = Table::new();
+
+        for (col, col_type) in &query.columns {
+            if col == "id" {
+                if *col_type != ColumnType::Int {
+                    return Err(format!("Expected 'id' to be an int"));
+                } else {
+                    did_have_id = true;
+                }
+            }
+
+            new_table.schema.add_column(col.clone(), col_type.clone());
+        }
+
+        if !did_have_id {
+            return Err(format!("Expected an 'id' column"));
+        }
+
+        self.tables.insert(query.table, new_table);
         Ok(())
     }
 
     pub fn exec(&mut self, query: Query) -> Result<(), String> {
+        if self.debug {
+            println!("\n\nParserResult:\n{:?}\n\n", query)
+        };
         match query {
             Query::Insert(query) => self.exec_insert(query)?,
             Query::Select(query) => self.exec_select(query)?,
             Query::Delete(query) => self.exec_delete(query)?,
+            Query::CreateTable(query) => self.exec_create_table(query)?,
         }
         Ok(())
     }

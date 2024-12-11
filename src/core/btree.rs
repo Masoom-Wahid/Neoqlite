@@ -45,7 +45,6 @@ where
         let mut sibling = mem::take(&mut self.children[idx - 1]);
         let child = &mut self.children[idx];
 
-        // Move the last key and value from sibling to current child
         let last_key = sibling.keys.pop().expect("Sibling has no keys to borrow");
         let last_value = sibling
             .values
@@ -54,11 +53,8 @@ where
         child.keys.insert(0, self.keys[idx - 1].clone());
         child.values.insert(0, self.values[idx - 1].clone());
 
-        // Update the separator key and value in the parent
         self.keys[idx - 1] = last_key;
         self.values[idx - 1] = last_value;
-
-        // If not leaf, move the last child from sibling to the front of child
         if !sibling.is_leaf {
             if let Some(child_to_move) = sibling.children.pop() {
                 child.children.insert(0, child_to_move);
@@ -72,17 +68,14 @@ where
         let mut sibling = mem::take(&mut self.children[idx + 1]);
         let child = &mut self.children[idx];
 
-        // Move the first key and value from sibling to current child
         let first_key = sibling.keys.remove(0);
         let first_value = sibling.values.remove(0);
         child.keys.push(self.keys[idx].clone());
         child.values.push(self.values[idx].clone());
 
-        // Update the separator key and value in the parent
         self.keys[idx] = first_key;
         self.values[idx] = first_value;
 
-        // If not leaf, move the first child from sibling to the end of child
         if !sibling.is_leaf {
             child.children.push(sibling.children.remove(0));
         }
@@ -94,15 +87,12 @@ where
         let mut sibling = self.children.remove(idx + 1);
         let child = &mut self.children[idx];
 
-        // Move the separator key and value from parent to child
         child.keys.push(self.keys.remove(idx));
         child.values.push(self.values.remove(idx));
 
-        // Append keys and values from sibling to child
         child.keys.extend(sibling.keys.clone());
         child.values.extend(sibling.values.clone());
 
-        // If not leaf, append children from sibling to child
         if !child.is_leaf {
             child.children.extend(sibling.children.drain(..));
         }
@@ -174,7 +164,7 @@ where
     }
 
     fn delete(&mut self, key: &K) {
-        let idx = self.find_key(key);
+        let mut idx = self.find_key(key);
 
         if idx < self.keys.len() && self.keys[idx] == *key {
             if self.is_leaf {
@@ -185,7 +175,6 @@ where
             }
         } else {
             if self.is_leaf {
-                // The key is not present in the tree
                 return;
             }
 
@@ -196,14 +185,10 @@ where
             }
 
             if flag && idx > self.keys.len() {
-                if let Some(child) = self.children.get_mut(idx - 1) {
-                    child.delete(key);
-                }
-            } else {
-                if let Some(child) = self.children.get_mut(idx) {
-                    child.delete(key);
-                }
+                idx -= 1;
             }
+
+            self.children[idx].delete(key);
         }
     }
 
@@ -213,22 +198,18 @@ where
 
         let mut new_child = Node::new(child.is_leaf, child.order);
 
-        // Move the second half of keys and values to new_child
         new_child.keys = child.keys.split_off(t);
         new_child.values = child.values.split_off(t);
 
-        // If not leaf, move the second half of children to new_child
         if !child.is_leaf {
             new_child.children = child.children.split_off(t);
         }
 
-        // Insert the median key and value to the parent
         self.keys
             .insert(i, child.keys.pop().expect("Child has no keys to move"));
         self.values
             .insert(i, child.values.pop().expect("Child has no values to move"));
 
-        // Insert the new child into children
         self.children.insert(i + 1, Box::new(new_child));
     }
 
@@ -250,7 +231,6 @@ where
         let mut i = self.keys.len();
 
         if self.is_leaf {
-            // Find the location to insert the new key
             while i > 0 && key < self.keys[i - 1] {
                 i -= 1;
             }
@@ -258,16 +238,13 @@ where
             self.keys.insert(i, key);
             self.values.insert(i, value);
         } else {
-            // Find the child which is going to have the new key
             while i > 0 && key < self.keys[i - 1] {
                 i -= 1;
             }
 
-            // Check if the found child is full
             if self.children[i].is_full() {
                 self.split_child(i);
 
-                // After split, the middle key moves up and child is split into two
                 if key > self.keys[i] {
                     i += 1;
                 }
@@ -303,17 +280,16 @@ where
     }
 
     pub fn delete(&mut self, key: &K) {
-        if let Some(ref mut r) = self.root {
-            let mut root = r.clone();
-            println!("{:?}", root);
-            root.delete(key);
+        println!("got key of {:?}", key);
+        if let Some(mut root_node) = self.root.take() {
+            root_node.delete(key);
 
-            if root.keys.is_empty() && !root.is_leaf {
-                self.root = Some(root.children.remove(0));
-            }
-
-            if root.keys.is_empty() && root.is_leaf {
+            if root_node.keys.is_empty() && !root_node.is_leaf {
+                self.root = Some(root_node.children.remove(0));
+            } else if root_node.keys.is_empty() && root_node.is_leaf {
                 self.root = None;
+            } else {
+                self.root = Some(root_node);
             }
         }
     }
@@ -355,7 +331,6 @@ where
                 Self::collect_values_in_order(&node.children[i], result);
                 result.push(node.values[i].clone());
             }
-            // Don't forget the last child
             if !node.children.is_empty() {
                 Self::collect_values_in_order(&node.children[node.children.len() - 1], result);
             }

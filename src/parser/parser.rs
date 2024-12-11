@@ -1,4 +1,7 @@
-use crate::parser::lexer::{Keyword, Token};
+use crate::{
+    core::db::ColumnType,
+    parser::lexer::{Keyword, Token},
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
@@ -30,7 +33,13 @@ pub struct DeleteQuery {
 pub struct InsertQuery {
     pub columns: Vec<String>,
     pub table: String,
-    pub values: Vec<String>,
+    pub values: Vec<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreateTableQuery {
+    pub table: String,
+    pub columns: Vec<(String, ColumnType)>,
 }
 
 pub struct Parser {
@@ -43,6 +52,7 @@ pub enum Query {
     Insert(InsertQuery),
     Select(SelectQuery),
     Delete(DeleteQuery),
+    CreateTable(CreateTableQuery),
 }
 
 impl Parser {
@@ -55,6 +65,10 @@ impl Parser {
 
     fn current_token(&self) -> Option<&Token> {
         self.tokens.get(self.position)
+    }
+
+    fn peek_token(&self) -> Option<&Token> {
+        self.tokens.get(self.position + 1)
     }
 
     fn advance(&mut self) {
@@ -128,7 +142,7 @@ impl Parser {
         self.expect_token(Token::LParen)?;
         let mut values = Vec::new();
         loop {
-            values.push(self.expect_identifier()?);
+            values.push(self.parse_expr()?);
             if let Some(Token::Comma) = self.current_token() {
                 self.advance();
             } else {
@@ -144,27 +158,68 @@ impl Parser {
         })
     }
 
+    fn to_column_type(input: &str) -> Result<ColumnType, String> {
+        match input {
+            "int" => Ok(ColumnType::Int),
+            "text" => Ok(ColumnType::String),
+            _ => Err(format!("Invalid Column type , got {}", input)),
+        }
+    }
+
+    fn parse_create_table(&mut self) -> Result<CreateTableQuery, String> {
+        self.expect_keyword(Keyword::Create)?;
+        self.expect_keyword(Keyword::Table)?;
+        let table = self.expect_identifier()?;
+        self.expect_token(Token::LParen)?;
+        let mut columns: Vec<(String, ColumnType)> = Vec::new();
+        loop {
+            let column_name = self.expect_identifier()?;
+            let column_type = Self::to_column_type(&self.expect_identifier()?)?;
+            columns.push((column_name, column_type));
+            if let Some(Token::Comma) = self.current_token() {
+                /*
+                 *   just in case if we have been in a place that after comma is a right paren
+                 */
+                match self.peek_token() {
+                    Some(Token::RParen) => {
+                        self.advance();
+                        break;
+                    }
+                    _ => {}
+                }
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        self.expect_token(Token::RParen)?;
+        self.expect_token(Token::Semicolon)?;
+
+        Ok(CreateTableQuery { table, columns })
+    }
+
     pub fn parse(&mut self) -> Result<Query, String> {
         let result = match &mut self.tokens.first().unwrap() {
             Token::Keyword(Keyword::Select) => Query::Select(self.parse_select()?),
             Token::Keyword(Keyword::Insert) => Query::Insert(self.parse_insert()?),
             Token::Keyword(Keyword::Delete) => Query::Delete(self.parse_delete()?),
-            _ => panic!("idk tbh"),
+            Token::Keyword(Keyword::Create) => Query::CreateTable(self.parse_create_table()?),
+            _ => return Err(format!("Invalid Query got {:?}", self.tokens.first())),
         };
         Ok(result)
     }
 
-    /*
-
     fn parse_expr(&mut self) -> Result<Expr, String> {
-        match self.current_token() {
-            Some(Token::Ident(ref id)) => {
+        let token = self.current_token().cloned();
+        match token {
+            Some(Token::Ident(id)) => {
                 self.advance();
-                Ok(Expr::Ident(id.clone()))
+                Ok(Expr::Ident(id.to_string()))
             }
             Some(Token::Number(num)) => {
                 self.advance();
-                Ok(Expr::Number(*num))
+                Ok(Expr::Number(num))
             }
             _ => Err(format!(
                 "Expected expression, but found {:?}",
@@ -173,50 +228,17 @@ impl Parser {
         }
     }
 
-    */
-
-    /*
-
-
-    fn parse_where_clause(&mut self) -> Result<Option<WhereClause>, String> {
-        if let Some(Token::Keyword(Keyword::Where)) = self.current_token() {
-            self.advance();
-            let left = self.parse_expr()?;
-            let operator = if let Some(Token::Operator(ref op)) = self.current_token() {
-                self.advance();
-                op.clone()
-            } else {
-                return Err(format!(
-                    "Expected operator, but found {:?}",
-                    self.current_token()
-                ));
-            };
-            let right = self.parse_expr()?;
-
-            Ok(Some(WhereClause {
-                left,
-                operator,
-                right,
-            }))
-        } else {
-            Ok(None)
-        }
-    }
-
-
-    */
-
     pub fn parse_where_clause(&mut self) -> Option<WhereClause> {
         let does_have_where = self.expect_keyword(Keyword::Where);
         let where_clause = {
             if does_have_where.is_ok() {
-                let left = self.expect_identifier().ok()?;
+                let left = self.parse_expr().ok()?;
                 let _ = self.expect_token(Token::Operator("=".to_string())).ok()?;
-                let right = self.expect_identifier().ok()?;
+                let right = self.parse_expr().ok()?;
                 Some(WhereClause {
-                    left: Expr::Ident(left),
+                    left,
                     operator: "=".to_string(),
-                    right: Expr::Ident(right),
+                    right,
                 })
             } else {
                 None

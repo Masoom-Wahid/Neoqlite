@@ -19,9 +19,11 @@ pub enum Keyword {
     From,
     Where,
     Insert,
+    Table,
     Into,
     Values,
     Update,
+    Create,
     Set,
     Delete,
     And,
@@ -42,6 +44,12 @@ pub enum Keyword {
 *   println!("lexer : {:?}",lexer);
 *
 *
+*   CREATE TABLE users(
+*       id int,
+*       username text,
+*       email text,
+*   );
+*
 */
 
 pub struct Lexer {
@@ -57,6 +65,7 @@ impl Lexer {
             "INSERT" => Token::Keyword(Keyword::Insert),
             "UPDATE" => Token::Keyword(Keyword::Update),
             "DELETE" => Token::Keyword(Keyword::Delete),
+            "CREATE" => Token::Keyword(Keyword::Create),
             "AND" => Token::Keyword(Keyword::And),
             "OR" => Token::Keyword(Keyword::Or),
             "NOT" => Token::Keyword(Keyword::Not),
@@ -70,6 +79,7 @@ impl Lexer {
             "ORDER" => Token::Keyword(Keyword::OrderBy),
             "LIMIT" => Token::Keyword(Keyword::Limit),
             "VALUES" => Token::Keyword(Keyword::Values),
+            "TABLE" => Token::Keyword(Keyword::Table),
             _ => Token::Ident(token.to_string()),
         }
     }

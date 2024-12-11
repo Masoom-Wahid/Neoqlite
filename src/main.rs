@@ -6,24 +6,47 @@ async fn main() -> Result<(), String> {
     //let sql_query = "SELECT name, age FROM users WHERE age > 21;";
     //let sql_query = "INSERT INTO users (id,name,email) values('1','masoom','masoom@email.com');";
     let mut neoqlite = Neoqlite::new();
+
     neoqlite.exec_stmt(
-        "insert into users(id,email,username) values('1','masoom','masoom@email.com');",
+        "CREATE TABLE otp (
+        id int,
+        otp text,
+        is_valid int
+    );",
     )?;
+
+    neoqlite
+        .exec_stmt("insert into users(id,email,username) values(1,'masoom','masoom@email.com');")?;
     neoqlite.exec_stmt(
-        "insert into users(id,email,username) values('2','notmasoom','notmasoom@email.com');",
+        "insert into users(id,email,username) values(2,'notmasoom','notmasoom@email.com');",
     )?;
     neoqlite
-        .exec_stmt("insert into users(id,email,username) values('3','nani','nani@email.com');")?;
+        .exec_stmt("insert into users(id,email,username) values(3,'nani','nani@email.com');")?;
     neoqlite
-        .exec_stmt("insert into users(id,email,username) values('4','nani','nani@email.com');")?;
+        .exec_stmt("insert into users(id,email,username) values(4,'nani','nani@email.com');")?;
     neoqlite
-        .exec_stmt("insert into users(id,email,username) values('5','nani','nani@email.com');")?;
+        .exec_stmt("insert into users(id,email,username) values(5,'nani','nani@email.com');")?;
+
+    neoqlite.exec_stmt(
+        "insert into users(id,email,username,otp) values(6,'mehdi','mehdi@email.com',645);",
+    )?;
+
+    neoqlite.set_debug(true);
+
+    neoqlite.exec_stmt("delete from users where id = 5;")?;
+
+    neoqlite.exec_stmt("select * from users;")?;
+
+    //neoqlite.exec_stmt("select * from users where id = 5;")?;
 
     //println!("{:?}", neoqlite);
     loop {
         print!("neoqlite => ");
         let input: String = get_input().await?;
-        let _ = neoqlite.exec_stmt(&input);
+        let res = neoqlite.exec_stmt(&input);
+        if !res.is_ok() {
+            println!("\n'{}'\n", res.err().unwrap());
+        }
         if input == ".q" {
             break;
         }
