@@ -56,7 +56,7 @@ Once running, Neoqlite starts an **interactive shell** where you can execute SQL
 ```sql
 CREATE TABLE users (
     id INT,
-    email TEXT,
+    email TEXT NOTNULL,
     username TEXT
 );
 ```
