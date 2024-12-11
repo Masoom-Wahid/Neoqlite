@@ -2,7 +2,7 @@
 
 Neoqlite is a lightweight, in-memory SQL database written in **Rust**. It aims to mimic (or to be like) the core functionality and power of **SQLite** while providing a simple interface for query execution and database management.
 
-This project is in its **early stages** and serves as a foundation for an SQLite-like database system.
+This project is in its **early stages** 
 
 ---
 
